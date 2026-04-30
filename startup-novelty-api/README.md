@@ -7,6 +7,8 @@ Novelty and long-term investability signal scoring for VC due diligence.
 This MVP analyzes a startup using:
 
 - The startup website homepage
+- An optional uploaded pitch deck or memo in `.pptx` or `.pdf`
+- Optional meeting transcript notes
 - Public research metadata from OpenAlex
 - A patent provider abstraction
 - A web search / competitor provider abstraction
@@ -110,18 +112,33 @@ Available endpoints:
 - `POST /score-startup`
 - `GET /docs`
 
+## API Contract
+
+`POST /score-startup` now accepts `multipart/form-data`.
+
+Required field:
+
+- `website`
+
+Optional fields:
+
+- `startup_name`
+- `description`
+- `sector`
+- `country`
+- `meeting_notes`
+- `supporting_document` as `.pdf` or `.pptx`
+
 ## Example Request
 
 ```bash
 curl -X POST http://127.0.0.1:8000/score-startup \
-  -H "Content-Type: application/json" \
-  -d '{
-    "startup_name": "Example AI",
-    "website": "https://example.com",
-    "description": "AI platform for hospital workflow automation",
-    "sector": "HealthTech AI",
-    "country": "Germany"
-  }'
+  -F "website=https://example.com" \
+  -F "startup_name=Example AI" \
+  -F "sector=HealthTech AI" \
+  -F "country=Germany" \
+  -F "meeting_notes=Founder says the wedge is hospital workflow automation with fast deployment." \
+  -F "supporting_document=@./example-deck.pptx"
 ```
 
 ## Example Response
@@ -161,6 +178,17 @@ curl -X POST http://127.0.0.1:8000/score-startup \
 
 - Fetches the provided homepage safely with timeout protection.
 - Extracts title, meta description, and visible text using BeautifulSoup.
+
+### Document Parser
+
+- Accepts uploaded `.pdf` and `.pptx` files.
+- Extracts readable text from pitch decks, memos, and other supporting materials.
+- Returns partial results with a limitation if a document is empty, unsupported, or unreadable.
+
+### Meeting Notes
+
+- Accepts optional transcript or diligence notes as plain text form data.
+- Feeds the notes into LLM extraction, evidence generation, and research query enrichment.
 
 ### OpenAlex
 

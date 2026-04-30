@@ -7,20 +7,21 @@ from pydantic import BaseModel, Field, field_validator
 
 class StartupScoreRequest(BaseModel):
     startup_name: str = Field(min_length=1, max_length=200)
-    website: str | None = Field(default=None, max_length=500)
-    description: str = Field(min_length=10, max_length=4_000)
-    sector: str = Field(min_length=2, max_length=200)
-    country: str = Field(min_length=2, max_length=100)
+    website: str = Field(min_length=1, max_length=500)
+    description: str = Field(default="", max_length=4_000)
+    sector: str = Field(default="", max_length=200)
+    country: str = Field(default="", max_length=100)
+    meeting_notes: str = Field(default="", max_length=20_000)
 
-    @field_validator("startup_name", "description", "sector", "country", mode="before")
+    @field_validator("startup_name", "website", mode="before")
     @classmethod
     def strip_required_text(cls, value: str) -> str:
         return value.strip()
 
-    @field_validator("website", mode="before")
+    @field_validator("description", "sector", "country", "meeting_notes", mode="before")
     @classmethod
-    def strip_optional_website(cls, value: str | None) -> str | None:
-        return value.strip() if value else value
+    def strip_optional_text(cls, value: str | None) -> str:
+        return value.strip() if value else ""
 
 
 class EvidenceItem(BaseModel):
@@ -35,6 +36,14 @@ class WebsiteContent(BaseModel):
     meta_description: str = ""
     text: str = ""
     fetched: bool = False
+    limitations: list[str] = Field(default_factory=list)
+
+
+class DocumentContent(BaseModel):
+    filename: str = ""
+    document_type: str = ""
+    text: str = ""
+    extracted: bool = False
     limitations: list[str] = Field(default_factory=list)
 
 

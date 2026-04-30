@@ -5,6 +5,7 @@ import logging
 
 from app.models import (
     CompetitorMetrics,
+    DocumentContent,
     LLMExtractedSignals,
     PatentMetrics,
     ResearchMetrics,
@@ -28,11 +29,12 @@ class LLMExtractor:
         self,
         startup: StartupScoreRequest,
         website: WebsiteContent,
+        document: DocumentContent,
         research: ResearchMetrics,
         patents: PatentMetrics,
         competitors: CompetitorMetrics,
     ) -> tuple[StartupSignals, list[str]]:
-        messages = self._build_messages(startup, website, research, patents, competitors)
+        messages = self._build_messages(startup, website, document, research, patents, competitors)
         limitations: list[str] = []
 
         try:
@@ -42,12 +44,13 @@ class LLMExtractor:
         except (ExternalServiceError, ValueError, json.JSONDecodeError) as exc:
             logger.warning("LLM extraction failed, using fallback signals: %s", exc)
             limitations.append(f"LLM extraction fallback was used: {exc}")
-            return self._fallback_signals(startup, website, research, competitors), limitations
+            return self._fallback_signals(startup, website, document, research, competitors), limitations
 
     def _build_messages(
         self,
         startup: StartupScoreRequest,
         website: WebsiteContent,
+        document: DocumentContent,
         research: ResearchMetrics,
         patents: PatentMetrics,
         competitors: CompetitorMetrics,
@@ -76,9 +79,13 @@ class LLMExtractor:
             "description": startup.description,
             "sector": startup.sector,
             "country": startup.country,
+            "meeting_notes_excerpt": truncate_text(startup.meeting_notes, 4_000),
             "website_title": website.title,
             "website_meta_description": website.meta_description,
             "website_text_excerpt": truncate_text(website.text, 4_500),
+            "document_filename": document.filename,
+            "document_type": document.document_type,
+            "document_text_excerpt": truncate_text(document.text, 4_500),
             "research_summary": research_summary,
             "patent_summary": patent_summary,
             "competitor_summary": competitor_summary,
@@ -138,6 +145,7 @@ class LLMExtractor:
         self,
         startup: StartupScoreRequest,
         website: WebsiteContent,
+        document: DocumentContent,
         research: ResearchMetrics,
         competitors: CompetitorMetrics,
     ) -> StartupSignals:
@@ -146,8 +154,10 @@ class LLMExtractor:
                 [
                     startup.sector,
                     startup.description,
+                    startup.meeting_notes,
                     website.title,
                     website.meta_description,
+                    document.text,
                     " ".join(research.topics),
                 ]
             ),
@@ -173,6 +183,8 @@ class LLMExtractor:
                 summary
                 for summary in [
                     website.meta_description or website.title,
+                    truncate_text(document.text, 220) if document.extracted else "",
+                    truncate_text(startup.meeting_notes, 220) if startup.meeting_notes else "",
                     research.top_titles[0] if research.top_titles else "",
                 ]
                 if summary
