@@ -2,7 +2,7 @@
 
 VC due-diligence MVP for novelty and long-term investability signal scoring.
 
-The repository contains a production-style FastAPI backend in [startup-novelty-api](/Users/vigneshkumarselvaraj/Documents/VC-Foresight/startup-novelty-api/README.md) that evaluates startups using public web content, research signals, placeholder patent/search providers, and OpenRouter-based LLM extraction.
+The repository contains a production-style FastAPI backend in [backend](/Users/vigneshkumarselvaraj/Documents/VC-Foresight/backend/README.md) that evaluates startups using public web content, research signals, placeholder patent/search providers, and OpenRouter-based LLM extraction.
 
 ## Product Framing
 
@@ -38,13 +38,15 @@ The MVP includes:
 ```text
 VC-Foresight/
   README.md
-  startup-novelty-api/
+  backend/
     app/
     tests/
     .env.example
     Dockerfile
     requirements.txt
     README.md
+  frontend/
+    ...
 ```
 
 ## Main API Input
@@ -111,7 +113,7 @@ The LLM is only used to extract structured signals such as:
 ## Run Locally
 
 ```bash
-cd /Users/vigneshkumarselvaraj/Documents/VC-Foresight/startup-novelty-api
+cd /Users/vigneshkumarselvaraj/Documents/VC-Foresight/backend
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
@@ -126,7 +128,7 @@ Open:
 
 ## Environment Variables
 
-Defined in [startup-novelty-api/.env.example](/Users/vigneshkumarselvaraj/Documents/VC-Foresight/startup-novelty-api/.env.example):
+Defined in [backend/.env.example](/Users/vigneshkumarselvaraj/Documents/VC-Foresight/backend/.env.example):
 
 - `OPENROUTER_API_KEY=`
 - `OPENROUTER_MODEL=`
@@ -140,7 +142,7 @@ Implemented tests cover model validation and deterministic scoring logic.
 Run:
 
 ```bash
-cd /Users/vigneshkumarselvaraj/Documents/VC-Foresight/startup-novelty-api
+cd /Users/vigneshkumarselvaraj/Documents/VC-Foresight/backend
 pytest
 ```
 
@@ -149,4 +151,4 @@ pytest
 - The patent provider is currently a placeholder with neutral scoring.
 - The competitor search provider is currently a placeholder with neutral scoring.
 - The architecture is ready for later integration with PatentsView, SerpAPI, Brave Search, Tavily, Exa, Bing, or similar providers.
-- Detailed implementation notes are in [startup-novelty-api/README.md](/Users/vigneshkumarselvaraj/Documents/VC-Foresight/startup-novelty-api/README.md).
+- Detailed implementation notes are in [backend/README.md](/Users/vigneshkumarselvaraj/Documents/VC-Foresight/backend/README.md).

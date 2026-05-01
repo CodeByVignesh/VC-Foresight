@@ -24,6 +24,19 @@ from app.services.search_provider import PlaceholderSearchProvider
 from app.services.website_fetcher import WebsiteFetcher
 
 
+def test_root_and_health_routes() -> None:
+    with TestClient(app) as client:
+        root_response = client.get("/")
+        assert root_response.status_code == 200
+        root_payload = root_response.json()
+        assert root_payload["service"] == "Startup Novelty API"
+        assert root_payload["docs_url"] == "/docs"
+
+        health_response = client.get("/health")
+        assert health_response.status_code == 200
+        assert health_response.json()["status"] == "ok"
+
+
 def test_score_startup_accepts_required_document_with_optional_website(monkeypatch) -> None:
     async def fake_fetch_website(self, website: str) -> WebsiteContent:
         return WebsiteContent(
@@ -123,7 +136,11 @@ def test_score_startup_accepts_required_document_with_optional_website(monkeypat
     assert response.status_code == 200
     payload = response.json()
     assert payload["startup_name"] == "Deck"
+    assert payload["predicted_domain"] == "HealthTech AI"
     assert payload["novelty_score"] >= 0
+    assert 0 <= payload["novelty_score_10"] <= 10
+    assert 0 <= payload["fit_score_10"] <= 10
+    assert 0 <= payload["foresight_score_10"] <= 10
     assert payload["crm_record"]["recorded"] is True
     assert payload["portfolio_check"]["checked"] is True
     assert payload["portfolio_check"]["has_similar_investment"] is True
@@ -134,6 +151,8 @@ def test_score_startup_accepts_required_document_with_optional_website(monkeypat
     crm_pitches = crm_repository.list_pitches()
     assert len(crm_companies) == 1
     assert len(crm_pitches) == 1
+    assert crm_companies[0].predicted_domain == "HealthTech AI"
+    assert crm_pitches[0].predicted_domain == "HealthTech AI"
     assert crm_pitches[0].deal_status == "screening"
 
     if db_path.exists():
@@ -232,6 +251,7 @@ def test_crm_endpoints_and_summary() -> None:
         summary = summary_response.json()
         assert summary["total_companies"] == 1
         assert summary["total_pitches"] == 1
+        assert summary["domain_counts"][0]["label"] == "Developer Tools AI"
         assert summary["deal_status_counts"][0]["label"] == "partner_review"
 
     if crm_db_path.exists():

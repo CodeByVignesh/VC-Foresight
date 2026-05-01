@@ -12,6 +12,10 @@ def clamp_score(value: float) -> int:
     return max(0, min(100, round(value)))
 
 
+def to_ten_point_score(score: int) -> float:
+    return round(score / 10, 1)
+
+
 def blend_with_neutral(raw_score: float, confidence: float) -> int:
     return clamp_score((raw_score * confidence) + (50 * (1 - confidence)))
 
@@ -119,6 +123,34 @@ def derive_risk_level(
     return "low"
 
 
+def calculate_fit_score(
+    novelty_score: int,
+    market_score: int,
+    competition_score: int,
+    execution_signal_score: int,
+) -> int:
+    return clamp_score(
+        (execution_signal_score * 0.35)
+        + (market_score * 0.30)
+        + (competition_score * 0.20)
+        + (novelty_score * 0.15)
+    )
+
+
+def calculate_foresight_score(
+    novelty_score: int,
+    market_score: int,
+    research_momentum_score: int,
+    patent_originality_score: int,
+) -> int:
+    return clamp_score(
+        (market_score * 0.35)
+        + (research_momentum_score * 0.30)
+        + (patent_originality_score * 0.20)
+        + (novelty_score * 0.15)
+    )
+
+
 def calculate_scores(
     signals: StartupSignals,
     research_metrics: ResearchMetrics,
@@ -146,6 +178,18 @@ def calculate_scores(
         + (market_score * 0.15)
         + (execution_signal_score * 0.10)
     )
+    fit_score = calculate_fit_score(
+        novelty_score=novelty_score,
+        market_score=market_score,
+        competition_score=competition_score,
+        execution_signal_score=execution_signal_score,
+    )
+    foresight_score = calculate_foresight_score(
+        novelty_score=novelty_score,
+        market_score=market_score,
+        research_momentum_score=research_momentum_score,
+        patent_originality_score=patent_originality_score,
+    )
 
     risk_level = derive_risk_level(
         novelty_score=novelty_score,
@@ -157,9 +201,18 @@ def calculate_scores(
 
     return ScoreResult(
         novelty_score=novelty_score,
+        novelty_score_10=to_ten_point_score(novelty_score),
         market_score=market_score,
+        market_score_10=to_ten_point_score(market_score),
         competition_score=competition_score,
+        competition_score_10=to_ten_point_score(competition_score),
         research_momentum_score=research_momentum_score,
+        research_momentum_score_10=to_ten_point_score(research_momentum_score),
         patent_originality_score=patent_originality_score,
+        patent_originality_score_10=to_ten_point_score(patent_originality_score),
+        fit_score=fit_score,
+        fit_score_10=to_ten_point_score(fit_score),
+        foresight_score=foresight_score,
+        foresight_score_10=to_ten_point_score(foresight_score),
         risk_level=risk_level,
     )

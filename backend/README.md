@@ -6,8 +6,8 @@ Novelty and long-term investability signal scoring for VC due diligence.
 
 This MVP analyzes a startup using:
 
-- The startup website homepage
-- An optional uploaded pitch deck or memo in `.pptx` or `.pdf`
+- A required uploaded pitch deck or memo in `.pptx` or `.pdf`
+- An optional startup website homepage
 - Optional meeting transcript notes
 - VC CRM records for all pitched companies
 - The VC's internal investment database
@@ -18,6 +18,7 @@ This MVP analyzes a startup using:
 
 It produces explainable due-diligence signals for:
 
+- `predicted_domain`
 - `novelty_score`
 - `market_score`
 - `competition_score`
@@ -48,7 +49,7 @@ The final scores are computed by deterministic Python logic. The LLM is used for
 ## Project Structure
 
 ```text
-startup-novelty-api/
+backend/
   app/
     main.py
     config.py
@@ -81,7 +82,7 @@ startup-novelty-api/
 4. Set `OPENROUTER_API_KEY`.
 
 ```bash
-cd startup-novelty-api
+cd backend
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
@@ -107,12 +108,13 @@ Optional headers supported by the code:
 ## Running Locally
 
 ```bash
-cd startup-novelty-api
+cd backend
 uvicorn app.main:app --reload
 ```
 
 Available endpoints:
 
+- `GET /`
 - `GET /health`
 - `GET /crm/companies`
 - `POST /crm/companies`
@@ -134,6 +136,7 @@ Stored company fields include:
 - website
 - sector
 - country
+- predicted domain
 - description
 - founder names
 - contact email
@@ -145,6 +148,7 @@ Stored pitch fields include:
 - pitch date
 - deal status
 - funding status
+- predicted domain
 - round name
 - amount requested
 - source of the deal
@@ -152,10 +156,11 @@ Stored pitch fields include:
 
 The intended flow is:
 
-1. A startup is uploaded from the frontend.
-2. The API can record the startup and pitch details into CRM.
-3. The API checks the VC portfolio for internal overlap.
-4. The API computes the novelty score.
+1. A startup is uploaded by a client application or API consumer.
+2. The backend predicts the startup domain from sector, deck text, notes, and optional website text.
+3. The API can record the startup and pitch details into CRM.
+4. The API checks the VC portfolio for internal overlap.
+5. The API computes the novelty score.
 
 This keeps CRM, portfolio overlap, and novelty scoring related but separate.
 
@@ -165,7 +170,7 @@ Before novelty scoring, the API checks the uploaded startup materials against th
 
 The sequence is:
 
-1. The frontend uploads the startup website and optional diligence materials.
+1. A client uploads the startup deck and optional diligence materials.
 2. The backend compares the startup against stored portfolio companies in SQLite.
 3. The API returns portfolio overlap signals such as exact, strong, or related matches.
 4. The same startup context then flows into the novelty scoring pipeline.
@@ -392,18 +397,18 @@ Depending on what is currently available in your OpenRouter account, you may als
 
 ## Adding Real Search APIs Later
 
-1. Replace `PlaceholderSearchProvider` in [app/services/search_provider.py](/Users/vigneshkumarselvaraj/Documents/VC-Foresight/startup-novelty-api/app/services/search_provider.py).
+1. Replace `PlaceholderSearchProvider` in [app/services/search_provider.py](/Users/vigneshkumarselvaraj/Documents/VC-Foresight/backend/app/services/search_provider.py).
 2. Map results into `CompetitorMetrics` and `EvidenceItem`.
 3. Set `provider_confidence` based on result quality and coverage.
 4. Add provider-specific API keys to `.env`.
 5. Expand unit tests to cover the new provider behavior.
 
-For patent integration, follow the same pattern in [app/services/patents_provider.py](/Users/vigneshkumarselvaraj/Documents/VC-Foresight/startup-novelty-api/app/services/patents_provider.py).
+For patent integration, follow the same pattern in [app/services/patents_provider.py](/Users/vigneshkumarselvaraj/Documents/VC-Foresight/backend/app/services/patents_provider.py).
 
 ## Testing
 
 ```bash
-cd startup-novelty-api
+cd backend
 pytest
 ```
 

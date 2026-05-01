@@ -170,6 +170,7 @@ class CRMCompanyCreate(BaseModel):
     website: str | None = Field(default=None, max_length=500)
     sector: str = Field(default="", max_length=200)
     country: str = Field(default="", max_length=100)
+    predicted_domain: str = Field(default="", max_length=120)
     description: str = Field(default="", max_length=6_000)
     founder_names: list[str] = Field(default_factory=list)
     contact_email: str | None = Field(default=None, max_length=320)
@@ -186,7 +187,7 @@ class CRMCompanyCreate(BaseModel):
     def strip_optional_crm_identity(cls, value: str | None) -> str | None:
         return value.strip() if value else None
 
-    @field_validator("sector", "country", "description", "notes", mode="before")
+    @field_validator("sector", "country", "predicted_domain", "description", "notes", mode="before")
     @classmethod
     def strip_optional_crm_text(cls, value: str | None) -> str:
         return value.strip() if value else ""
@@ -203,12 +204,13 @@ class CRMPitchCreate(BaseModel):
     pitch_date: date
     deal_status: DealStatus = "new"
     funding_status: FundingStatus = "unknown"
+    predicted_domain: str = Field(default="", max_length=120)
     round_name: str = Field(default="", max_length=120)
     amount_requested_usd: float | None = Field(default=None, ge=0)
     source: str = Field(default="frontend_upload", max_length=120)
     notes: str = Field(default="", max_length=8_000)
 
-    @field_validator("round_name", "source", "notes", mode="before")
+    @field_validator("predicted_domain", "round_name", "source", "notes", mode="before")
     @classmethod
     def strip_pitch_text(cls, value: str | None) -> str:
         return value.strip() if value else ""
@@ -222,6 +224,7 @@ class CRMPitch(BaseModel):
     pitch_date: date
     deal_status: DealStatus
     funding_status: FundingStatus
+    predicted_domain: str = ""
     round_name: str = ""
     amount_requested_usd: float | None = None
     source: str = ""
@@ -243,6 +246,7 @@ class CRMCountBucket(BaseModel):
 class CRMSummaryResponse(BaseModel):
     total_companies: int = 0
     total_pitches: int = 0
+    domain_counts: list[CRMCountBucket] = Field(default_factory=list)
     deal_status_counts: list[CRMCountBucket] = Field(default_factory=list)
     funding_status_counts: list[CRMCountBucket] = Field(default_factory=list)
     monthly_pitch_counts: list[CRMCountBucket] = Field(default_factory=list)
@@ -250,15 +254,25 @@ class CRMSummaryResponse(BaseModel):
 
 class ScoreResult(BaseModel):
     novelty_score: int = Field(ge=0, le=100)
+    novelty_score_10: float = Field(ge=0.0, le=10.0)
     market_score: int = Field(ge=0, le=100)
+    market_score_10: float = Field(ge=0.0, le=10.0)
     competition_score: int = Field(ge=0, le=100)
+    competition_score_10: float = Field(ge=0.0, le=10.0)
     research_momentum_score: int = Field(ge=0, le=100)
+    research_momentum_score_10: float = Field(ge=0.0, le=10.0)
     patent_originality_score: int = Field(ge=0, le=100)
+    patent_originality_score_10: float = Field(ge=0.0, le=10.0)
+    fit_score: int = Field(ge=0, le=100)
+    fit_score_10: float = Field(ge=0.0, le=10.0)
+    foresight_score: int = Field(ge=0, le=100)
+    foresight_score_10: float = Field(ge=0.0, le=10.0)
     risk_level: Literal["low", "medium", "high"]
 
 
 class StartupAnalysisResponse(ScoreResult):
     startup_name: str
+    predicted_domain: str = ""
     summary: str
     portfolio_check: PortfolioCheckResult = Field(default_factory=PortfolioCheckResult)
     crm_record: CRMRecordResult = Field(default_factory=CRMRecordResult)

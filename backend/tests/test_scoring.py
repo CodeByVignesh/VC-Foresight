@@ -48,8 +48,11 @@ def test_calculate_scores_rewards_stronger_signals() -> None:
     result = calculate_scores(signals, research, patents, competitors)
 
     assert result.novelty_score >= 60
+    assert result.novelty_score_10 >= 6.0
     assert result.market_score >= 60
     assert result.patent_originality_score >= 60
+    assert result.fit_score >= 55
+    assert result.foresight_score >= 55
     assert result.risk_level in {"low", "medium"}
 
 
@@ -68,3 +71,5 @@ def test_calculate_scores_stays_neutral_with_placeholder_sources() -> None:
     assert 35 <= result.competition_score <= 65
     assert 35 <= result.patent_originality_score <= 65
     assert 35 <= result.research_momentum_score <= 65
+    assert 3.5 <= result.fit_score_10 <= 6.5
+    assert 3.5 <= result.foresight_score_10 <= 6.5

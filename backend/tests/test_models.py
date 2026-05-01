@@ -21,11 +21,21 @@ def test_request_model_allows_optional_website_and_normalizes_optional_fields() 
 def test_response_model_validates_expected_shape() -> None:
     response = StartupAnalysisResponse(
         startup_name="Example AI",
+        predicted_domain="HealthTech AI",
         novelty_score=60,
+        novelty_score_10=6.0,
         market_score=62,
+        market_score_10=6.2,
         competition_score=50,
+        competition_score_10=5.0,
         research_momentum_score=58,
+        research_momentum_score_10=5.8,
         patent_originality_score=50,
+        patent_originality_score_10=5.0,
+        fit_score=57,
+        fit_score_10=5.7,
+        foresight_score=59,
+        foresight_score_10=5.9,
         risk_level="medium",
         summary="Summary",
         evidence=[EvidenceItem(source="website", finding="Test finding", url="https://example.com")],
@@ -33,4 +43,6 @@ def test_response_model_validates_expected_shape() -> None:
     )
 
     assert response.startup_name == "Example AI"
+    assert response.predicted_domain == "HealthTech AI"
+    assert response.fit_score_10 == 5.7
     assert response.evidence[0].source == "website"

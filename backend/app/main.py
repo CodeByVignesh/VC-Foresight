@@ -43,7 +43,7 @@ from app.services.portfolio_matcher import PortfolioMatcher
 from app.services.portfolio_repository import PortfolioRepository
 from app.services.search_provider import PlaceholderSearchProvider
 from app.services.website_fetcher import WebsiteFetcher
-from app.utils.text import extract_keywords, truncate_text
+from app.utils.text import extract_keywords, predict_pitch_domain, truncate_text
 
 
 def configure_logging(settings: Settings) -> None:
@@ -90,6 +90,7 @@ logger = logging.getLogger(__name__)
 
 def _build_summary(
     startup: StartupScoreRequest,
+    predicted_domain: str,
     signals: StartupSignals,
     research: ResearchMetrics,
     scores: StartupAnalysisResponse | None,
@@ -132,7 +133,7 @@ def _build_summary(
         else ""
     )
     return (
-        f"{startup.startup_name} shows {novelty_phrase} novelty signals in {startup.sector}. "
+        f"{startup.startup_name} is classified as {predicted_domain} and shows {novelty_phrase} novelty signals in {startup.sector}. "
         f"Claimed innovation centers on {innovation}. "
         f"The current evidence suggests {market_phrase}, and {research_phrase}. "
         f"{website_phrase}{document_phrase}{meeting_phrase}{portfolio_phrase}{limitation_phrase}"
@@ -141,6 +142,7 @@ def _build_summary(
 
 def _aggregate_evidence(
     startup: StartupScoreRequest,
+    predicted_domain: str,
     website: WebsiteContent,
     document: DocumentContent,
     portfolio_check: PortfolioCheckResult,
@@ -150,6 +152,15 @@ def _aggregate_evidence(
     signals: StartupSignals,
 ) -> list[EvidenceItem]:
     evidence: list[EvidenceItem] = []
+
+    if predicted_domain:
+        evidence.append(
+            EvidenceItem(
+                source="domain_classifier",
+                finding=f"Predicted pitch domain: {predicted_domain}",
+                url=startup.website or None,
+            )
+        )
 
     if website.fetched and (website.meta_description or startup.description):
         evidence.append(
@@ -269,6 +280,7 @@ def _parse_pitch_date(raw_value: str | None) -> date:
 
 def _build_crm_company_payload(
     startup: StartupScoreRequest,
+    predicted_domain: str,
     founder_names: list[str],
     contact_email: str | None,
     crm_notes: str,
@@ -279,12 +291,47 @@ def _build_crm_company_payload(
         website=startup.website,
         sector=startup.sector,
         country=startup.country,
+        predicted_domain=predicted_domain,
         description=startup.description,
         founder_names=founder_names,
         contact_email=contact_email,
         notes=crm_notes,
         keywords=keywords,
     )
+
+
+def _predict_domain_for_analysis(
+    startup: StartupScoreRequest,
+    website: WebsiteContent,
+    document: DocumentContent,
+) -> str:
+    return predict_pitch_domain(
+        startup.sector,
+        startup.description,
+        startup.meeting_notes,
+        " ".join([website.title, website.meta_description, truncate_text(website.text, 1_600)]),
+        truncate_text(document.text, 1_600),
+    )
+
+
+def _predict_domain_for_crm_company(company: CRMCompanyCreate) -> str:
+    return company.predicted_domain or predict_pitch_domain(
+        company.sector,
+        company.description,
+        company.notes,
+        " ".join(company.keywords),
+        company.website or "",
+    )
+
+
+@app.get("/", include_in_schema=False)
+async def root() -> dict[str, str]:
+    return {
+        "service": "Startup Novelty API",
+        "description": "Novelty and long-term investability signal scoring for VC due diligence.",
+        "docs_url": "/docs",
+        "health_url": "/health",
+    }
 
 
 @app.get("/health")
@@ -329,7 +376,8 @@ async def list_crm_companies(request: Request) -> list[CRMCompany]:
 @app.post("/crm/companies", response_model=CRMCompany)
 async def upsert_crm_company(request: Request, payload: CRMCompanyCreate) -> CRMCompany:
     crm_repository: CRMRepository = request.app.state.crm_repository
-    return await asyncio.to_thread(crm_repository.upsert_company, payload)
+    enriched_payload = payload.model_copy(update={"predicted_domain": _predict_domain_for_crm_company(payload)})
+    return await asyncio.to_thread(crm_repository.upsert_company, enriched_payload)
 
 
 @app.get("/crm/pitches", response_model=list[CRMPitch])
@@ -400,6 +448,7 @@ async def score_startup(
     patent_result: PatentMetrics
     competitor_result: CompetitorMetrics
     limitations: list[str] = []
+    predicted_domain = "General Software"
 
     results = await asyncio.gather(
         website_fetcher.fetch(payload.website),
@@ -440,6 +489,7 @@ async def score_startup(
     limitations.extend(document_result.limitations)
     limitations.extend(patent_result.limitations)
     limitations.extend(competitor_result.limitations)
+    predicted_domain = _predict_domain_for_analysis(payload, website_result, document_result)
 
     if record_in_crm:
         try:
@@ -447,6 +497,7 @@ async def score_startup(
                 crm_repository.record_pitch_for_company,
                 _build_crm_company_payload(
                     startup=payload,
+                    predicted_domain=predicted_domain,
                     founder_names=_parse_csv_list(founder_names),
                     contact_email=contact_email.strip() if contact_email else None,
                     crm_notes=(crm_notes or "").strip(),
@@ -456,6 +507,7 @@ async def score_startup(
                     pitch_date=_parse_pitch_date(pitch_date),
                     deal_status=deal_status,  # type: ignore[arg-type]
                     funding_status=funding_status,  # type: ignore[arg-type]
+                    predicted_domain=predicted_domain,
                     round_name=(round_name or "").strip(),
                     amount_requested_usd=amount_requested_usd,
                     source=(crm_source or "frontend_upload").strip(),
@@ -490,6 +542,7 @@ async def score_startup(
 
     evidence = _aggregate_evidence(
         startup=payload,
+        predicted_domain=predicted_domain,
         website=website_result,
         document=document_result,
         portfolio_check=portfolio_check,
@@ -501,8 +554,10 @@ async def score_startup(
 
     response = StartupAnalysisResponse(
         startup_name=payload.startup_name,
+        predicted_domain=predicted_domain,
         summary=_build_summary(
             payload,
+            predicted_domain,
             signals,
             research_result,
             None,
@@ -519,6 +574,7 @@ async def score_startup(
     )
     response.summary = _build_summary(
         payload,
+        predicted_domain,
         signals,
         research_result,
         response,

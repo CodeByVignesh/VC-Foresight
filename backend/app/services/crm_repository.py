@@ -30,6 +30,7 @@ class CRMRepository:
                     website TEXT,
                     sector TEXT NOT NULL DEFAULT '',
                     country TEXT NOT NULL DEFAULT '',
+                    predicted_domain TEXT NOT NULL DEFAULT '',
                     description TEXT NOT NULL DEFAULT '',
                     founder_names_json TEXT NOT NULL DEFAULT '[]',
                     contact_email TEXT,
@@ -48,6 +49,7 @@ class CRMRepository:
                     pitch_date TEXT NOT NULL,
                     deal_status TEXT NOT NULL,
                     funding_status TEXT NOT NULL,
+                    predicted_domain TEXT NOT NULL DEFAULT '',
                     round_name TEXT NOT NULL DEFAULT '',
                     amount_requested_usd REAL,
                     source TEXT NOT NULL DEFAULT '',
@@ -57,6 +59,8 @@ class CRMRepository:
                 )
                 """
             )
+            self._ensure_column(connection, "crm_companies", "predicted_domain", "TEXT NOT NULL DEFAULT ''")
+            self._ensure_column(connection, "crm_pitches", "predicted_domain", "TEXT NOT NULL DEFAULT ''")
             connection.commit()
 
     def upsert_company(self, company: CRMCompanyCreate) -> CRMCompany:
@@ -68,16 +72,17 @@ class CRMRepository:
                 cursor = connection.execute(
                     """
                     INSERT INTO crm_companies (
-                        company_name, website, sector, country, description,
+                        company_name, website, sector, country, predicted_domain, description,
                         founder_names_json, contact_email, notes, keywords_json,
                         created_at, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         company.company_name,
                         company.website,
                         company.sector,
                         company.country,
+                        company.predicted_domain,
                         company.description,
                         json.dumps(company.founder_names),
                         company.contact_email,
@@ -95,7 +100,7 @@ class CRMRepository:
                 connection.execute(
                     """
                     UPDATE crm_companies
-                    SET company_name = ?, website = ?, sector = ?, country = ?, description = ?,
+                    SET company_name = ?, website = ?, sector = ?, country = ?, predicted_domain = ?, description = ?,
                         founder_names_json = ?, contact_email = ?, notes = ?, keywords_json = ?, updated_at = ?
                     WHERE id = ?
                     """,
@@ -104,6 +109,7 @@ class CRMRepository:
                         merged.website,
                         merged.sector,
                         merged.country,
+                        merged.predicted_domain,
                         merged.description,
                         json.dumps(merged.founder_names),
                         merged.contact_email,
@@ -122,7 +128,7 @@ class CRMRepository:
         with sqlite3.connect(self.db_path) as connection:
             connection.row_factory = sqlite3.Row
             company = connection.execute(
-                "SELECT id FROM crm_companies WHERE id = ?",
+                "SELECT id, predicted_domain FROM crm_companies WHERE id = ?",
                 (pitch.company_id,),
             ).fetchone()
             if company is None:
@@ -131,15 +137,16 @@ class CRMRepository:
             cursor = connection.execute(
                 """
                 INSERT INTO crm_pitches (
-                    company_id, pitch_date, deal_status, funding_status, round_name,
+                    company_id, pitch_date, deal_status, funding_status, predicted_domain, round_name,
                     amount_requested_usd, source, notes, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     pitch.company_id,
                     pitch.pitch_date.isoformat(),
                     pitch.deal_status,
                     pitch.funding_status,
+                    pitch.predicted_domain or company["predicted_domain"] or "",
                     pitch.round_name,
                     pitch.amount_requested_usd,
                     pitch.source,
@@ -163,6 +170,7 @@ class CRMRepository:
                 pitch_date=pitch.pitch_date,
                 deal_status=pitch.deal_status,
                 funding_status=pitch.funding_status,
+                predicted_domain=pitch.predicted_domain or saved_company.predicted_domain,
                 round_name=pitch.round_name,
                 amount_requested_usd=pitch.amount_requested_usd,
                 source=pitch.source,
@@ -176,7 +184,7 @@ class CRMRepository:
             connection.row_factory = sqlite3.Row
             rows = connection.execute(
                 """
-                SELECT id, company_name, website, sector, country, description,
+                SELECT id, company_name, website, sector, country, predicted_domain, description,
                        founder_names_json, contact_email, notes, keywords_json, created_at, updated_at
                 FROM crm_companies
                 ORDER BY updated_at DESC, id DESC
@@ -190,7 +198,7 @@ class CRMRepository:
             rows = connection.execute(
                 """
                 SELECT p.id, p.company_id, c.company_name, c.website AS company_website,
-                       p.pitch_date, p.deal_status, p.funding_status, p.round_name,
+                       p.pitch_date, p.deal_status, p.funding_status, p.predicted_domain, p.round_name,
                        p.amount_requested_usd, p.source, p.notes, p.created_at
                 FROM crm_pitches p
                 JOIN crm_companies c ON c.id = p.company_id
@@ -204,6 +212,16 @@ class CRMRepository:
             connection.row_factory = sqlite3.Row
             total_companies = int(connection.execute("SELECT COUNT(*) FROM crm_companies").fetchone()[0])
             total_pitches = int(connection.execute("SELECT COUNT(*) FROM crm_pitches").fetchone()[0])
+            domain_rows = connection.execute(
+                """
+                SELECT COALESCE(NULLIF(p.predicted_domain, ''), NULLIF(c.predicted_domain, ''), 'Unclassified') AS label,
+                       COUNT(*) AS count
+                FROM crm_pitches p
+                JOIN crm_companies c ON c.id = p.company_id
+                GROUP BY label
+                ORDER BY count DESC, label ASC
+                """
+            ).fetchall()
             deal_rows = connection.execute(
                 "SELECT deal_status AS label, COUNT(*) AS count FROM crm_pitches GROUP BY deal_status ORDER BY count DESC"
             ).fetchall()
@@ -223,6 +241,7 @@ class CRMRepository:
         return CRMSummaryResponse(
             total_companies=total_companies,
             total_pitches=total_pitches,
+            domain_counts=[CRMCountBucket(label=row["label"], count=int(row["count"])) for row in domain_rows],
             deal_status_counts=[CRMCountBucket(label=row["label"], count=int(row["count"])) for row in deal_rows],
             funding_status_counts=[CRMCountBucket(label=row["label"], count=int(row["count"])) for row in funding_rows],
             monthly_pitch_counts=[
@@ -235,7 +254,7 @@ class CRMRepository:
             connection.row_factory = sqlite3.Row
             row = connection.execute(
                 """
-                SELECT id, company_name, website, sector, country, description,
+                SELECT id, company_name, website, sector, country, predicted_domain, description,
                        founder_names_json, contact_email, notes, keywords_json, created_at, updated_at
                 FROM crm_companies
                 WHERE id = ?
@@ -252,7 +271,7 @@ class CRMRepository:
             row = connection.execute(
                 """
                 SELECT p.id, p.company_id, c.company_name, c.website AS company_website,
-                       p.pitch_date, p.deal_status, p.funding_status, p.round_name,
+                       p.pitch_date, p.deal_status, p.funding_status, p.predicted_domain, p.round_name,
                        p.amount_requested_usd, p.source, p.notes, p.created_at
                 FROM crm_pitches p
                 JOIN crm_companies c ON c.id = p.company_id
@@ -292,6 +311,7 @@ class CRMRepository:
             website=company.website or existing["website"],
             sector=company.sector or existing["sector"],
             country=company.country or existing["country"],
+            predicted_domain=company.predicted_domain or existing["predicted_domain"],
             description=company.description or existing["description"],
             founder_names=merged_founders,
             contact_email=company.contact_email or existing["contact_email"],
@@ -306,6 +326,7 @@ class CRMRepository:
             website=row["website"],
             sector=row["sector"],
             country=row["country"],
+            predicted_domain=row["predicted_domain"],
             description=row["description"],
             founder_names=json.loads(row["founder_names_json"] or "[]"),
             contact_email=row["contact_email"],
@@ -324,9 +345,15 @@ class CRMRepository:
             pitch_date=date.fromisoformat(row["pitch_date"]),
             deal_status=row["deal_status"],
             funding_status=row["funding_status"],
+            predicted_domain=row["predicted_domain"],
             round_name=row["round_name"],
             amount_requested_usd=row["amount_requested_usd"],
             source=row["source"],
             notes=row["notes"],
             created_at=datetime.fromisoformat(row["created_at"]),
         )
+
+    def _ensure_column(self, connection: sqlite3.Connection, table_name: str, column_name: str, column_sql: str) -> None:
+        columns = {row[1] for row in connection.execute(f"PRAGMA table_info({table_name})").fetchall()}
+        if column_name not in columns:
+            connection.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_sql}")
