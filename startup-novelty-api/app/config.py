@@ -1,4 +1,5 @@
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic import AnyHttpUrl, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -14,6 +15,7 @@ class Settings(BaseSettings):
     openrouter_http_referer: AnyHttpUrl | None = None
     openrouter_x_title: str | None = "VC Foresight MVP"
     cors_allow_origins: list[str] = ["*"]
+    vc_portfolio_db_path: Path = Path("data/vc_portfolio.db")
 
     model_config = SettingsConfigDict(
         env_file=".env",

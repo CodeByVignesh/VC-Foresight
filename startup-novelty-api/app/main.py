@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from contextlib import asynccontextmanager
+from pathlib import Path
 from urllib.parse import urlparse
 
 import httpx
@@ -15,6 +16,9 @@ from app.models import (
     DocumentContent,
     EvidenceItem,
     PatentMetrics,
+    PortfolioCheckResult,
+    PortfolioCompany,
+    PortfolioCompanyCreate,
     ResearchMetrics,
     StartupAnalysisResponse,
     StartupScoreRequest,
@@ -27,6 +31,8 @@ from app.services.llm_extractor import LLMExtractor
 from app.services.openalex_client import OpenAlexClient
 from app.services.openrouter_client import OpenRouterClient
 from app.services.patents_provider import PlaceholderPatentsProvider
+from app.services.portfolio_matcher import PortfolioMatcher
+from app.services.portfolio_repository import PortfolioRepository
 from app.services.search_provider import PlaceholderSearchProvider
 from app.services.website_fetcher import WebsiteFetcher
 from app.utils.text import truncate_text
@@ -44,8 +50,11 @@ async def lifespan(app: FastAPI):
     settings = get_settings()
     configure_logging(settings)
     timeout = httpx.Timeout(settings.http_timeout_seconds)
+    portfolio_repository = PortfolioRepository(Path(settings.vc_portfolio_db_path))
+    portfolio_repository.init_db()
     app.state.settings = settings
     app.state.http_client = httpx.AsyncClient(timeout=timeout)
+    app.state.portfolio_repository = portfolio_repository
     yield
     await app.state.http_client.aclose()
 
@@ -73,6 +82,7 @@ def _build_summary(
     signals: StartupSignals,
     research: ResearchMetrics,
     scores: StartupAnalysisResponse | None,
+    portfolio_check: PortfolioCheckResult,
     website: WebsiteContent,
     document: DocumentContent,
     limitations: list[str],
@@ -91,6 +101,13 @@ def _build_summary(
         else "public research evidence is currently limited"
     )
     innovation = signals.claimed_innovation or startup.description or truncate_text(document.text, 220)
+    portfolio_phrase = ""
+    if portfolio_check.overlap_level == "exact":
+        portfolio_phrase = " An exact match was found in the VC portfolio database."
+    elif portfolio_check.overlap_level == "strong":
+        portfolio_phrase = " The startup strongly overlaps with an existing portfolio investment."
+    elif portfolio_check.overlap_level == "related":
+        portfolio_phrase = " The startup appears related to an existing portfolio investment."
     website_phrase = "Website messaging was incorporated." if website.fetched else "Website evidence was unavailable."
     document_phrase = (
         f" Uploaded {document.document_type.upper()} materials were incorporated."
@@ -107,7 +124,7 @@ def _build_summary(
         f"{startup.startup_name} shows {novelty_phrase} novelty signals in {startup.sector}. "
         f"Claimed innovation centers on {innovation}. "
         f"The current evidence suggests {market_phrase}, and {research_phrase}. "
-        f"{website_phrase}{document_phrase}{meeting_phrase}{limitation_phrase}"
+        f"{website_phrase}{document_phrase}{meeting_phrase}{portfolio_phrase}{limitation_phrase}"
     )
 
 
@@ -115,6 +132,7 @@ def _aggregate_evidence(
     startup: StartupScoreRequest,
     website: WebsiteContent,
     document: DocumentContent,
+    portfolio_check: PortfolioCheckResult,
     research: ResearchMetrics,
     patents: PatentMetrics,
     competitors: CompetitorMetrics,
@@ -154,6 +172,15 @@ def _aggregate_evidence(
                 source="meeting_notes",
                 finding=truncate_text(startup.meeting_notes, 240),
                 url=None,
+            )
+        )
+
+    for match in portfolio_check.top_matches[:3]:
+        evidence.append(
+            EvidenceItem(
+                source="portfolio_database",
+                finding=f"{match.company_name}: {match.rationale}",
+                url=match.website,
             )
         )
 
@@ -206,11 +233,29 @@ def _build_research_query_description(
 @app.get("/health")
 async def health(request: Request) -> dict[str, str]:
     settings: Settings = request.app.state.settings
+    portfolio_repository: PortfolioRepository = request.app.state.portfolio_repository
+    company_count = await asyncio.to_thread(lambda: len(portfolio_repository.list_companies()))
     return {
         "status": "ok",
         "environment": settings.app_env,
         "model": settings.openrouter_model,
+        "portfolio_company_count": str(company_count),
     }
+
+
+@app.get("/portfolio-companies", response_model=list[PortfolioCompany])
+async def list_portfolio_companies(request: Request) -> list[PortfolioCompany]:
+    portfolio_repository: PortfolioRepository = request.app.state.portfolio_repository
+    return await asyncio.to_thread(portfolio_repository.list_companies)
+
+
+@app.post("/portfolio-companies", response_model=PortfolioCompany)
+async def create_portfolio_company(
+    request: Request,
+    payload: PortfolioCompanyCreate,
+) -> PortfolioCompany:
+    portfolio_repository: PortfolioRepository = request.app.state.portfolio_repository
+    return await asyncio.to_thread(portfolio_repository.add_company, payload)
 
 
 @app.post("/score-startup", response_model=StartupAnalysisResponse)
@@ -239,11 +284,14 @@ async def score_startup(
     document_parser = DocumentParser()
     openalex_client = OpenAlexClient(http_client)
     patents_provider = PlaceholderPatentsProvider()
+    portfolio_matcher = PortfolioMatcher()
+    portfolio_repository: PortfolioRepository = request.app.state.portfolio_repository
     search_provider = PlaceholderSearchProvider()
     llm_extractor = LLMExtractor(OpenRouterClient(http_client, settings))
 
     website_result: WebsiteContent
     document_result: DocumentContent
+    portfolio_check: PortfolioCheckResult
     research_result: ResearchMetrics
     patent_result: PatentMetrics
     competitor_result: CompetitorMetrics
@@ -252,6 +300,7 @@ async def score_startup(
     results = await asyncio.gather(
         website_fetcher.fetch(payload.website),
         document_parser.parse(supporting_document),
+        asyncio.to_thread(portfolio_repository.list_companies),
         patents_provider.search(payload),
         search_provider.search(payload),
         return_exceptions=True,
@@ -259,6 +308,7 @@ async def score_startup(
 
     website_result = WebsiteContent()
     document_result = DocumentContent()
+    portfolio_check = PortfolioCheckResult()
     research_result = ResearchMetrics()
     patent_result = PatentMetrics()
     competitor_result = CompetitorMetrics()
@@ -273,8 +323,10 @@ async def score_startup(
         elif index == 1:
             document_result = result
         elif index == 2:
-            patent_result = result
+            portfolio_check = portfolio_matcher.check_overlap(payload, website_result, document_result, result)
         elif index == 3:
+            patent_result = result
+        elif index == 4:
             competitor_result = result
 
     limitations.extend(website_result.limitations)
@@ -307,6 +359,7 @@ async def score_startup(
         startup=payload,
         website=website_result,
         document=document_result,
+        portfolio_check=portfolio_check,
         research=research_result,
         patents=patent_result,
         competitors=competitor_result,
@@ -315,7 +368,17 @@ async def score_startup(
 
     response = StartupAnalysisResponse(
         startup_name=payload.startup_name,
-        summary=_build_summary(payload, signals, research_result, None, website_result, document_result, limitations),
+        summary=_build_summary(
+            payload,
+            signals,
+            research_result,
+            None,
+            portfolio_check,
+            website_result,
+            document_result,
+            limitations,
+        ),
+        portfolio_check=portfolio_check,
         evidence=evidence,
         limitations=sorted(set(limitations)),
         **scores.model_dump(),
@@ -325,6 +388,7 @@ async def score_startup(
         signals,
         research_result,
         response,
+        portfolio_check,
         website_result,
         document_result,
         response.limitations,

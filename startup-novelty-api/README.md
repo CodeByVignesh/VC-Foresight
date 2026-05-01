@@ -9,6 +9,7 @@ This MVP analyzes a startup using:
 - The startup website homepage
 - An optional uploaded pitch deck or memo in `.pptx` or `.pdf`
 - Optional meeting transcript notes
+- The VC's internal investment database
 - Public research metadata from OpenAlex
 - A patent provider abstraction
 - A web search / competitor provider abstraction
@@ -21,6 +22,7 @@ It produces explainable due-diligence signals for:
 - `competition_score`
 - `research_momentum_score`
 - `patent_originality_score`
+- `portfolio_check`
 - `risk_level`
 
 The final scores are computed by deterministic Python logic. The LLM is used for structured fact extraction and summarization support, not for directly deciding the final score.
@@ -92,6 +94,7 @@ cp .env.example .env
 | `OPENROUTER_MODEL` | No | Model name, defaults to `openai/gpt-4.1-mini` |
 | `APP_ENV` | No | Example: `development`, `production` |
 | `HTTP_TIMEOUT_SECONDS` | No | Default request timeout for upstream APIs |
+| `VC_PORTFOLIO_DB_PATH` | No | SQLite path for the VC internal portfolio database |
 
 Optional headers supported by the code:
 
@@ -109,8 +112,46 @@ uvicorn app.main:app --reload
 Available endpoints:
 
 - `GET /health`
+- `GET /portfolio-companies`
+- `POST /portfolio-companies`
 - `POST /score-startup`
 - `GET /docs`
+
+## Portfolio Database Flow
+
+Before novelty scoring, the API checks the uploaded startup materials against the VC's internal portfolio database.
+
+The sequence is:
+
+1. The frontend uploads the startup website and optional diligence materials.
+2. The backend compares the startup against stored portfolio companies in SQLite.
+3. The API returns portfolio overlap signals such as exact, strong, or related matches.
+4. The same startup context then flows into the novelty scoring pipeline.
+
+This keeps internal portfolio overlap separate from market novelty while still returning both in one response.
+
+## Portfolio Management API
+
+Create a portfolio company:
+
+```bash
+curl -X POST http://127.0.0.1:8000/portfolio-companies \
+  -H "Content-Type: application/json" \
+  -d '{
+    "company_name": "Hospital Flow",
+    "website": "https://hospitalflow.ai",
+    "sector": "HealthTech AI",
+    "country": "Germany",
+    "thesis": "Workflow automation for hospitals",
+    "keywords": ["hospital", "workflow", "automation"]
+  }'
+```
+
+List portfolio companies:
+
+```bash
+curl http://127.0.0.1:8000/portfolio-companies
+```
 
 ## API Contract
 
@@ -151,6 +192,25 @@ curl -X POST http://127.0.0.1:8000/score-startup \
   "competition_score": 50,
   "research_momentum_score": 61,
   "patent_originality_score": 50,
+  "portfolio_check": {
+    "checked": true,
+    "portfolio_company_count": 24,
+    "overlap_score": 76,
+    "overlap_level": "strong",
+    "has_similar_investment": true,
+    "top_matches": [
+      {
+        "company_id": 4,
+        "company_name": "Hospital Flow",
+        "website": "https://hospitalflow.ai",
+        "sector": "HealthTech AI",
+        "overlap_score": 76,
+        "match_type": "strong",
+        "shared_keywords": ["automation", "hospital", "workflow"],
+        "rationale": "Shared keywords: automation, hospital, workflow. Sector overlap is high."
+      }
+    ]
+  },
   "risk_level": "medium",
   "summary": "Example AI shows moderate novelty signals in HealthTech AI with evidence of market interest and research activity, but the current MVP uses placeholder patent and competitor search providers.",
   "evidence": [
@@ -189,6 +249,12 @@ curl -X POST http://127.0.0.1:8000/score-startup \
 
 - Accepts optional transcript or diligence notes as plain text form data.
 - Feeds the notes into LLM extraction, evidence generation, and research query enrichment.
+
+### VC Portfolio Database
+
+- Stores the VC's previous investments in SQLite.
+- Checks whether the uploaded startup is exact, strong, or related to existing portfolio companies.
+- Returns the top matching internal investments before the novelty score is interpreted.
 
 ### OpenAlex
 

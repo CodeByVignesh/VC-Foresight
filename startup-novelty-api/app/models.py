@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
@@ -101,6 +102,56 @@ class StartupSignals(BaseModel):
     website_signal_present: bool = False
 
 
+class PortfolioCompanyCreate(BaseModel):
+    company_name: str = Field(min_length=1, max_length=200)
+    website: str | None = Field(default=None, max_length=500)
+    sector: str = Field(default="", max_length=200)
+    country: str = Field(default="", max_length=100)
+    thesis: str = Field(default="", max_length=6_000)
+    notes: str = Field(default="", max_length=6_000)
+    keywords: list[str] = Field(default_factory=list)
+
+    @field_validator("company_name", mode="before")
+    @classmethod
+    def strip_company_name(cls, value: str) -> str:
+        return value.strip()
+
+    @field_validator("website", mode="before")
+    @classmethod
+    def strip_company_website(cls, value: str | None) -> str | None:
+        return value.strip() if value else None
+
+    @field_validator("sector", "country", "thesis", "notes", mode="before")
+    @classmethod
+    def strip_company_text(cls, value: str | None) -> str:
+        return value.strip() if value else ""
+
+
+class PortfolioCompany(PortfolioCompanyCreate):
+    id: int
+    created_at: datetime
+
+
+class PortfolioMatch(BaseModel):
+    company_id: int
+    company_name: str
+    website: str | None = None
+    sector: str = ""
+    overlap_score: int = Field(ge=0, le=100)
+    match_type: Literal["exact", "strong", "related"]
+    shared_keywords: list[str] = Field(default_factory=list)
+    rationale: str
+
+
+class PortfolioCheckResult(BaseModel):
+    checked: bool = False
+    portfolio_company_count: int = 0
+    overlap_score: int = Field(default=0, ge=0, le=100)
+    overlap_level: Literal["none", "related", "strong", "exact"] = "none"
+    has_similar_investment: bool = False
+    top_matches: list[PortfolioMatch] = Field(default_factory=list)
+
+
 class ScoreResult(BaseModel):
     novelty_score: int = Field(ge=0, le=100)
     market_score: int = Field(ge=0, le=100)
@@ -113,5 +164,6 @@ class ScoreResult(BaseModel):
 class StartupAnalysisResponse(ScoreResult):
     startup_name: str
     summary: str
+    portfolio_check: PortfolioCheckResult = Field(default_factory=PortfolioCheckResult)
     evidence: list[EvidenceItem] = Field(default_factory=list)
     limitations: list[str] = Field(default_factory=list)
