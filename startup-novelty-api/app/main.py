@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from contextlib import asynccontextmanager
+from datetime import date, datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -13,6 +14,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import Settings, get_settings
 from app.models import (
     CompetitorMetrics,
+    CRMCompany,
+    CRMCompanyCreate,
+    CRMRecordResult,
+    CRMPitch,
+    CRMPitchCreate,
+    CRMSummaryResponse,
     DocumentContent,
     EvidenceItem,
     PatentMetrics,
@@ -26,6 +33,7 @@ from app.models import (
     WebsiteContent,
 )
 from app.scoring import calculate_scores
+from app.services.crm_repository import CRMRepository
 from app.services.document_parser import DocumentParser
 from app.services.llm_extractor import LLMExtractor
 from app.services.openalex_client import OpenAlexClient
@@ -35,7 +43,7 @@ from app.services.portfolio_matcher import PortfolioMatcher
 from app.services.portfolio_repository import PortfolioRepository
 from app.services.search_provider import PlaceholderSearchProvider
 from app.services.website_fetcher import WebsiteFetcher
-from app.utils.text import truncate_text
+from app.utils.text import extract_keywords, truncate_text
 
 
 def configure_logging(settings: Settings) -> None:
@@ -51,10 +59,13 @@ async def lifespan(app: FastAPI):
     configure_logging(settings)
     timeout = httpx.Timeout(settings.http_timeout_seconds)
     portfolio_repository = PortfolioRepository(Path(settings.vc_portfolio_db_path))
+    crm_repository = CRMRepository(Path(settings.vc_portfolio_db_path))
     portfolio_repository.init_db()
+    crm_repository.init_db()
     app.state.settings = settings
     app.state.http_client = httpx.AsyncClient(timeout=timeout)
     app.state.portfolio_repository = portfolio_repository
+    app.state.crm_repository = crm_repository
     yield
     await app.state.http_client.aclose()
 
@@ -230,16 +241,53 @@ def _build_research_query_description(
     return truncate_text(combined, 2_500)
 
 
+def _parse_csv_list(raw_value: str | None) -> list[str]:
+    if not raw_value:
+        return []
+    return [part.strip() for part in raw_value.split(",") if part.strip()]
+
+
+def _parse_pitch_date(raw_value: str | None) -> date:
+    if not raw_value:
+        return datetime.now(timezone.utc).date()
+    return date.fromisoformat(raw_value)
+
+
+def _build_crm_company_payload(
+    startup: StartupScoreRequest,
+    founder_names: list[str],
+    contact_email: str | None,
+    crm_notes: str,
+) -> CRMCompanyCreate:
+    keywords = extract_keywords(" ".join([startup.sector, startup.description, startup.meeting_notes]), max_keywords=12)
+    return CRMCompanyCreate(
+        company_name=startup.startup_name,
+        website=startup.website,
+        sector=startup.sector,
+        country=startup.country,
+        description=startup.description,
+        founder_names=founder_names,
+        contact_email=contact_email,
+        notes=crm_notes,
+        keywords=keywords,
+    )
+
+
 @app.get("/health")
 async def health(request: Request) -> dict[str, str]:
     settings: Settings = request.app.state.settings
     portfolio_repository: PortfolioRepository = request.app.state.portfolio_repository
+    crm_repository: CRMRepository = request.app.state.crm_repository
     company_count = await asyncio.to_thread(lambda: len(portfolio_repository.list_companies()))
+    crm_company_count = await asyncio.to_thread(lambda: len(crm_repository.list_companies()))
+    crm_pitch_count = await asyncio.to_thread(lambda: len(crm_repository.list_pitches()))
     return {
         "status": "ok",
         "environment": settings.app_env,
         "model": settings.openrouter_model,
         "portfolio_company_count": str(company_count),
+        "crm_company_count": str(crm_company_count),
+        "crm_pitch_count": str(crm_pitch_count),
     }
 
 
@@ -258,6 +306,36 @@ async def create_portfolio_company(
     return await asyncio.to_thread(portfolio_repository.add_company, payload)
 
 
+@app.get("/crm/companies", response_model=list[CRMCompany])
+async def list_crm_companies(request: Request) -> list[CRMCompany]:
+    crm_repository: CRMRepository = request.app.state.crm_repository
+    return await asyncio.to_thread(crm_repository.list_companies)
+
+
+@app.post("/crm/companies", response_model=CRMCompany)
+async def upsert_crm_company(request: Request, payload: CRMCompanyCreate) -> CRMCompany:
+    crm_repository: CRMRepository = request.app.state.crm_repository
+    return await asyncio.to_thread(crm_repository.upsert_company, payload)
+
+
+@app.get("/crm/pitches", response_model=list[CRMPitch])
+async def list_crm_pitches(request: Request) -> list[CRMPitch]:
+    crm_repository: CRMRepository = request.app.state.crm_repository
+    return await asyncio.to_thread(crm_repository.list_pitches)
+
+
+@app.post("/crm/pitches", response_model=CRMPitch)
+async def create_crm_pitch(request: Request, payload: CRMPitchCreate) -> CRMPitch:
+    crm_repository: CRMRepository = request.app.state.crm_repository
+    return await asyncio.to_thread(crm_repository.create_pitch, payload)
+
+
+@app.get("/crm/summary", response_model=CRMSummaryResponse)
+async def crm_summary(request: Request) -> CRMSummaryResponse:
+    crm_repository: CRMRepository = request.app.state.crm_repository
+    return await asyncio.to_thread(crm_repository.get_summary)
+
+
 @app.post("/score-startup", response_model=StartupAnalysisResponse)
 async def score_startup(
     request: Request,
@@ -267,6 +345,16 @@ async def score_startup(
     sector: str | None = Form(default=None),
     country: str | None = Form(default=None),
     meeting_notes: str | None = Form(default=None),
+    founder_names: str | None = Form(default=None),
+    contact_email: str | None = Form(default=None),
+    pitch_date: str | None = Form(default=None),
+    deal_status: str = Form(default="new"),
+    funding_status: str = Form(default="unknown"),
+    round_name: str | None = Form(default=None),
+    amount_requested_usd: float | None = Form(default=None),
+    crm_notes: str | None = Form(default=None),
+    crm_source: str | None = Form(default="frontend_upload"),
+    record_in_crm: bool = Form(default=True),
     supporting_document: UploadFile | None = File(default=None),
 ) -> StartupAnalysisResponse:
     settings: Settings = request.app.state.settings
@@ -286,11 +374,13 @@ async def score_startup(
     patents_provider = PlaceholderPatentsProvider()
     portfolio_matcher = PortfolioMatcher()
     portfolio_repository: PortfolioRepository = request.app.state.portfolio_repository
+    crm_repository: CRMRepository = request.app.state.crm_repository
     search_provider = PlaceholderSearchProvider()
     llm_extractor = LLMExtractor(OpenRouterClient(http_client, settings))
 
     website_result: WebsiteContent
     document_result: DocumentContent
+    crm_record = CRMRecordResult()
     portfolio_check: PortfolioCheckResult
     research_result: ResearchMetrics
     patent_result: PatentMetrics
@@ -333,6 +423,32 @@ async def score_startup(
     limitations.extend(document_result.limitations)
     limitations.extend(patent_result.limitations)
     limitations.extend(competitor_result.limitations)
+
+    if record_in_crm:
+        try:
+            saved_company, saved_pitch = await asyncio.to_thread(
+                crm_repository.record_pitch_for_company,
+                _build_crm_company_payload(
+                    startup=payload,
+                    founder_names=_parse_csv_list(founder_names),
+                    contact_email=contact_email.strip() if contact_email else None,
+                    crm_notes=(crm_notes or "").strip(),
+                ),
+                CRMPitchCreate(
+                    company_id=1,
+                    pitch_date=_parse_pitch_date(pitch_date),
+                    deal_status=deal_status,  # type: ignore[arg-type]
+                    funding_status=funding_status,  # type: ignore[arg-type]
+                    round_name=(round_name or "").strip(),
+                    amount_requested_usd=amount_requested_usd,
+                    source=(crm_source or "frontend_upload").strip(),
+                    notes=(crm_notes or "").strip(),
+                ),
+            )
+            crm_record = CRMRecordResult(recorded=True, company_id=saved_company.id, pitch_id=saved_pitch.id)
+        except Exception as exc:
+            logger.error("CRM recording failed: %s", exc)
+            limitations.append(f"CRM recording failed: {exc}")
 
     research_query_description = _build_research_query_description(payload, website_result, document_result)
     research_result = await openalex_client.fetch_research(payload.sector, research_query_description)
@@ -379,6 +495,7 @@ async def score_startup(
             limitations,
         ),
         portfolio_check=portfolio_check,
+        crm_record=crm_record,
         evidence=evidence,
         limitations=sorted(set(limitations)),
         **scores.model_dump(),

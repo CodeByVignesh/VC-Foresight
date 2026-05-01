@@ -6,8 +6,16 @@ from fastapi.testclient import TestClient
 from pptx import Presentation
 
 from app.main import app
-from app.models import CompetitorMetrics, PatentMetrics, PortfolioCompanyCreate, ResearchMetrics, StartupSignals, WebsiteContent
+from app.models import (
+    CompetitorMetrics,
+    PatentMetrics,
+    PortfolioCompanyCreate,
+    ResearchMetrics,
+    StartupSignals,
+    WebsiteContent,
+)
 from app.scoring import CURRENT_YEAR
+from app.services.crm_repository import CRMRepository
 from app.services.llm_extractor import LLMExtractor
 from app.services.openalex_client import OpenAlexClient
 from app.services.patents_provider import PlaceholderPatentsProvider
@@ -77,6 +85,11 @@ def test_score_startup_accepts_multipart_with_optional_document(monkeypatch) -> 
             keywords=["hospital", "workflow", "automation", "clinical"],
         )
     )
+    crm_db_path = Path(f"data/test_vc_crm_{uuid.uuid4().hex}.db")
+    if crm_db_path.exists():
+        crm_db_path.unlink()
+    crm_repository = CRMRepository(crm_db_path)
+    crm_repository.init_db()
     presentation = Presentation()
     slide = presentation.slides.add_slide(presentation.slide_layouts[1])
     slide.shapes.title.text = "Example AI"
@@ -87,12 +100,17 @@ def test_score_startup_accepts_multipart_with_optional_document(monkeypatch) -> 
 
     with TestClient(app) as client:
         app.state.portfolio_repository = repository
+        app.state.crm_repository = crm_repository
         response = client.post(
             "/score-startup",
             data={
                 "website": "https://example.com",
                 "sector": "HealthTech AI",
                 "meeting_notes": "Founder emphasized workflow automation and hospital deployment plans.",
+                "pitch_date": "2026-05-01",
+                "deal_status": "screening",
+                "funding_status": "seeking",
+                "founder_names": "Alice Doe,Bob Roe",
             },
             files={
                 "supporting_document": (
@@ -107,14 +125,22 @@ def test_score_startup_accepts_multipart_with_optional_document(monkeypatch) -> 
     payload = response.json()
     assert payload["startup_name"] == "Example"
     assert payload["novelty_score"] >= 0
+    assert payload["crm_record"]["recorded"] is True
     assert payload["portfolio_check"]["checked"] is True
     assert payload["portfolio_check"]["has_similar_investment"] is True
     assert payload["portfolio_check"]["top_matches"][0]["company_name"] == "Hospital Flow"
     assert any(item["source"] == "document_pptx" for item in payload["evidence"])
     assert any(item["source"] == "meeting_notes" for item in payload["evidence"])
+    crm_companies = crm_repository.list_companies()
+    crm_pitches = crm_repository.list_pitches()
+    assert len(crm_companies) == 1
+    assert len(crm_pitches) == 1
+    assert crm_pitches[0].deal_status == "screening"
 
     if db_path.exists():
         db_path.unlink()
+    if crm_db_path.exists():
+        crm_db_path.unlink()
 
 
 def test_portfolio_company_endpoints() -> None:
@@ -147,3 +173,57 @@ def test_portfolio_company_endpoints() -> None:
 
     if db_path.exists():
         db_path.unlink()
+
+
+def test_crm_endpoints_and_summary() -> None:
+    crm_db_path = Path(f"data/test_vc_crm_endpoints_{uuid.uuid4().hex}.db")
+    if crm_db_path.exists():
+        crm_db_path.unlink()
+    crm_repository = CRMRepository(crm_db_path)
+    crm_repository.init_db()
+
+    with TestClient(app) as client:
+        app.state.crm_repository = crm_repository
+        company_response = client.post(
+            "/crm/companies",
+            json={
+                "company_name": "Infra Brain",
+                "website": "https://infra.example",
+                "sector": "Developer Tools",
+                "country": "Germany",
+                "description": "AI infra for engineering teams",
+                "founder_names": ["Alice"],
+                "keywords": ["developer", "infrastructure", "ai"],
+            },
+        )
+        assert company_response.status_code == 200
+        company_id = company_response.json()["id"]
+
+        pitch_response = client.post(
+            "/crm/pitches",
+            json={
+                "company_id": company_id,
+                "pitch_date": "2026-05-01",
+                "deal_status": "partner_review",
+                "funding_status": "in_discussion",
+                "round_name": "Seed",
+                "amount_requested_usd": 750000,
+                "source": "warm_intro",
+                "notes": "Strong technical team",
+            },
+        )
+        assert pitch_response.status_code == 200
+
+        pitches_response = client.get("/crm/pitches")
+        assert pitches_response.status_code == 200
+        assert len(pitches_response.json()) == 1
+
+        summary_response = client.get("/crm/summary")
+        assert summary_response.status_code == 200
+        summary = summary_response.json()
+        assert summary["total_companies"] == 1
+        assert summary["total_pitches"] == 1
+        assert summary["deal_status_counts"][0]["label"] == "partner_review"
+
+    if crm_db_path.exists():
+        crm_db_path.unlink()

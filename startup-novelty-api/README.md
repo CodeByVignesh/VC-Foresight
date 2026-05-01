@@ -9,6 +9,7 @@ This MVP analyzes a startup using:
 - The startup website homepage
 - An optional uploaded pitch deck or memo in `.pptx` or `.pdf`
 - Optional meeting transcript notes
+- VC CRM records for all pitched companies
 - The VC's internal investment database
 - Public research metadata from OpenAlex
 - A patent provider abstraction
@@ -22,6 +23,7 @@ It produces explainable due-diligence signals for:
 - `competition_score`
 - `research_momentum_score`
 - `patent_originality_score`
+- `crm_record`
 - `portfolio_check`
 - `risk_level`
 
@@ -94,7 +96,7 @@ cp .env.example .env
 | `OPENROUTER_MODEL` | No | Model name, defaults to `openai/gpt-4.1-mini` |
 | `APP_ENV` | No | Example: `development`, `production` |
 | `HTTP_TIMEOUT_SECONDS` | No | Default request timeout for upstream APIs |
-| `VC_PORTFOLIO_DB_PATH` | No | SQLite path for the VC internal portfolio database |
+| `VC_PORTFOLIO_DB_PATH` | No | SQLite path shared by the VC portfolio and CRM databases |
 
 Optional headers supported by the code:
 
@@ -112,10 +114,50 @@ uvicorn app.main:app --reload
 Available endpoints:
 
 - `GET /health`
+- `GET /crm/companies`
+- `POST /crm/companies`
+- `GET /crm/pitches`
+- `POST /crm/pitches`
+- `GET /crm/summary`
 - `GET /portfolio-companies`
 - `POST /portfolio-companies`
 - `POST /score-startup`
 - `GET /docs`
+
+## CRM Flow
+
+The backend now supports a lightweight VC CRM for every company that pitches.
+
+Stored company fields include:
+
+- company name
+- website
+- sector
+- country
+- description
+- founder names
+- contact email
+- internal notes
+- keywords
+
+Stored pitch fields include:
+
+- pitch date
+- deal status
+- funding status
+- round name
+- amount requested
+- source of the deal
+- pitch notes
+
+The intended flow is:
+
+1. A startup is uploaded from the frontend.
+2. The API can record the startup and pitch details into CRM.
+3. The API checks the VC portfolio for internal overlap.
+4. The API computes the novelty score.
+
+This keeps CRM, portfolio overlap, and novelty scoring related but separate.
 
 ## Portfolio Database Flow
 
@@ -153,6 +195,47 @@ List portfolio companies:
 curl http://127.0.0.1:8000/portfolio-companies
 ```
 
+## CRM Management API
+
+Create or update a CRM company:
+
+```bash
+curl -X POST http://127.0.0.1:8000/crm/companies \
+  -H "Content-Type: application/json" \
+  -d '{
+    "company_name": "Infra Brain",
+    "website": "https://infra.example",
+    "sector": "Developer Tools",
+    "country": "Germany",
+    "description": "AI infra for engineering teams",
+    "founder_names": ["Alice"],
+    "keywords": ["developer", "infrastructure", "ai"]
+  }'
+```
+
+Create a pitch record:
+
+```bash
+curl -X POST http://127.0.0.1:8000/crm/pitches \
+  -H "Content-Type: application/json" \
+  -d '{
+    "company_id": 1,
+    "pitch_date": "2026-05-01",
+    "deal_status": "partner_review",
+    "funding_status": "in_discussion",
+    "round_name": "Seed",
+    "amount_requested_usd": 750000,
+    "source": "warm_intro",
+    "notes": "Strong technical team"
+  }'
+```
+
+Fetch chart-ready summary data:
+
+```bash
+curl http://127.0.0.1:8000/crm/summary
+```
+
 ## API Contract
 
 `POST /score-startup` now accepts `multipart/form-data`.
@@ -168,6 +251,16 @@ Optional fields:
 - `sector`
 - `country`
 - `meeting_notes`
+- `founder_names` as comma-separated text
+- `contact_email`
+- `pitch_date` as `YYYY-MM-DD`
+- `deal_status`
+- `funding_status`
+- `round_name`
+- `amount_requested_usd`
+- `crm_notes`
+- `crm_source`
+- `record_in_crm`
 - `supporting_document` as `.pdf` or `.pptx`
 
 ## Example Request
@@ -178,6 +271,10 @@ curl -X POST http://127.0.0.1:8000/score-startup \
   -F "startup_name=Example AI" \
   -F "sector=HealthTech AI" \
   -F "country=Germany" \
+  -F "pitch_date=2026-05-01" \
+  -F "deal_status=screening" \
+  -F "funding_status=seeking" \
+  -F "founder_names=Alice Doe,Bob Roe" \
   -F "meeting_notes=Founder says the wedge is hospital workflow automation with fast deployment." \
   -F "supporting_document=@./example-deck.pptx"
 ```
@@ -192,6 +289,11 @@ curl -X POST http://127.0.0.1:8000/score-startup \
   "competition_score": 50,
   "research_momentum_score": 61,
   "patent_originality_score": 50,
+  "crm_record": {
+    "recorded": true,
+    "company_id": 14,
+    "pitch_id": 52
+  },
   "portfolio_check": {
     "checked": true,
     "portfolio_company_count": 24,
@@ -255,6 +357,12 @@ curl -X POST http://127.0.0.1:8000/score-startup \
 - Stores the VC's previous investments in SQLite.
 - Checks whether the uploaded startup is exact, strong, or related to existing portfolio companies.
 - Returns the top matching internal investments before the novelty score is interpreted.
+
+### VC CRM Database
+
+- Stores all pitched companies, not just invested ones.
+- Records funding pipeline status and pitch metadata.
+- Exposes summary data that can directly support charts in a future UI.
 
 ### OpenAlex
 

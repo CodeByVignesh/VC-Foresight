@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
@@ -152,6 +152,102 @@ class PortfolioCheckResult(BaseModel):
     top_matches: list[PortfolioMatch] = Field(default_factory=list)
 
 
+DealStatus = Literal["new", "screening", "partner_review", "due_diligence", "passed", "invested"]
+FundingStatus = Literal[
+    "unknown",
+    "seeking",
+    "not_raising",
+    "in_discussion",
+    "due_diligence",
+    "term_sheet",
+    "invested",
+    "passed",
+]
+
+
+class CRMCompanyCreate(BaseModel):
+    company_name: str = Field(min_length=1, max_length=200)
+    website: str | None = Field(default=None, max_length=500)
+    sector: str = Field(default="", max_length=200)
+    country: str = Field(default="", max_length=100)
+    description: str = Field(default="", max_length=6_000)
+    founder_names: list[str] = Field(default_factory=list)
+    contact_email: str | None = Field(default=None, max_length=320)
+    notes: str = Field(default="", max_length=8_000)
+    keywords: list[str] = Field(default_factory=list)
+
+    @field_validator("company_name", mode="before")
+    @classmethod
+    def strip_crm_company_name(cls, value: str) -> str:
+        return value.strip()
+
+    @field_validator("website", "contact_email", mode="before")
+    @classmethod
+    def strip_optional_crm_identity(cls, value: str | None) -> str | None:
+        return value.strip() if value else None
+
+    @field_validator("sector", "country", "description", "notes", mode="before")
+    @classmethod
+    def strip_optional_crm_text(cls, value: str | None) -> str:
+        return value.strip() if value else ""
+
+
+class CRMCompany(CRMCompanyCreate):
+    id: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class CRMPitchCreate(BaseModel):
+    company_id: int = Field(gt=0)
+    pitch_date: date
+    deal_status: DealStatus = "new"
+    funding_status: FundingStatus = "unknown"
+    round_name: str = Field(default="", max_length=120)
+    amount_requested_usd: float | None = Field(default=None, ge=0)
+    source: str = Field(default="frontend_upload", max_length=120)
+    notes: str = Field(default="", max_length=8_000)
+
+    @field_validator("round_name", "source", "notes", mode="before")
+    @classmethod
+    def strip_pitch_text(cls, value: str | None) -> str:
+        return value.strip() if value else ""
+
+
+class CRMPitch(BaseModel):
+    id: int
+    company_id: int
+    company_name: str
+    company_website: str | None = None
+    pitch_date: date
+    deal_status: DealStatus
+    funding_status: FundingStatus
+    round_name: str = ""
+    amount_requested_usd: float | None = None
+    source: str = ""
+    notes: str = ""
+    created_at: datetime
+
+
+class CRMRecordResult(BaseModel):
+    recorded: bool = False
+    company_id: int | None = None
+    pitch_id: int | None = None
+
+
+class CRMCountBucket(BaseModel):
+    label: str
+    count: int = Field(ge=0)
+
+
+class CRMSummaryResponse(BaseModel):
+    total_companies: int = 0
+    total_pitches: int = 0
+    deal_status_counts: list[CRMCountBucket] = Field(default_factory=list)
+    funding_status_counts: list[CRMCountBucket] = Field(default_factory=list)
+    monthly_pitch_counts: list[CRMCountBucket] = Field(default_factory=list)
+
+
 class ScoreResult(BaseModel):
     novelty_score: int = Field(ge=0, le=100)
     market_score: int = Field(ge=0, le=100)
@@ -165,5 +261,6 @@ class StartupAnalysisResponse(ScoreResult):
     startup_name: str
     summary: str
     portfolio_check: PortfolioCheckResult = Field(default_factory=PortfolioCheckResult)
+    crm_record: CRMRecordResult = Field(default_factory=CRMRecordResult)
     evidence: list[EvidenceItem] = Field(default_factory=list)
     limitations: list[str] = Field(default_factory=list)
