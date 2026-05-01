@@ -242,10 +242,11 @@ curl http://127.0.0.1:8000/crm/summary
 
 Required field:
 
-- `website`
+- `supporting_document` as `.pdf` or `.pptx`
 
 Optional fields:
 
+- `website`
 - `startup_name`
 - `description`
 - `sector`
@@ -261,13 +262,11 @@ Optional fields:
 - `crm_notes`
 - `crm_source`
 - `record_in_crm`
-- `supporting_document` as `.pdf` or `.pptx`
 
 ## Example Request
 
 ```bash
 curl -X POST http://127.0.0.1:8000/score-startup \
-  -F "website=https://example.com" \
   -F "startup_name=Example AI" \
   -F "sector=HealthTech AI" \
   -F "country=Germany" \
@@ -346,6 +345,7 @@ curl -X POST http://127.0.0.1:8000/score-startup \
 - Accepts uploaded `.pdf` and `.pptx` files.
 - Extracts readable text from pitch decks, memos, and other supporting materials.
 - Returns partial results with a limitation if a document is empty, unsupported, or unreadable.
+- The uploaded document is the primary required input for scoring.
 
 ### Meeting Notes
 

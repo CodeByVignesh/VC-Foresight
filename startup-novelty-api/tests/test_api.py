@@ -24,7 +24,7 @@ from app.services.search_provider import PlaceholderSearchProvider
 from app.services.website_fetcher import WebsiteFetcher
 
 
-def test_score_startup_accepts_multipart_with_optional_document(monkeypatch) -> None:
+def test_score_startup_accepts_required_document_with_optional_website(monkeypatch) -> None:
     async def fake_fetch_website(self, website: str) -> WebsiteContent:
         return WebsiteContent(
             url=website,
@@ -104,7 +104,6 @@ def test_score_startup_accepts_multipart_with_optional_document(monkeypatch) -> 
         response = client.post(
             "/score-startup",
             data={
-                "website": "https://example.com",
                 "sector": "HealthTech AI",
                 "meeting_notes": "Founder emphasized workflow automation and hospital deployment plans.",
                 "pitch_date": "2026-05-01",
@@ -123,7 +122,7 @@ def test_score_startup_accepts_multipart_with_optional_document(monkeypatch) -> 
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["startup_name"] == "Example"
+    assert payload["startup_name"] == "Deck"
     assert payload["novelty_score"] >= 0
     assert payload["crm_record"]["recorded"] is True
     assert payload["portfolio_check"]["checked"] is True
@@ -141,6 +140,16 @@ def test_score_startup_accepts_multipart_with_optional_document(monkeypatch) -> 
         db_path.unlink()
     if crm_db_path.exists():
         crm_db_path.unlink()
+
+
+def test_score_startup_requires_supporting_document() -> None:
+    with TestClient(app) as client:
+        response = client.post(
+            "/score-startup",
+            data={"startup_name": "No Deck Startup"},
+        )
+
+    assert response.status_code == 422
 
 
 def test_portfolio_company_endpoints() -> None:

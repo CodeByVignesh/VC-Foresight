@@ -1,17 +1,17 @@
 from app.models import EvidenceItem, StartupAnalysisResponse, StartupScoreRequest
 
 
-def test_request_model_requires_website_and_normalizes_optional_fields() -> None:
+def test_request_model_allows_optional_website_and_normalizes_optional_fields() -> None:
     payload = StartupScoreRequest(
         startup_name="Example AI",
-        website=" https://example.com ",
+        website=None,
         description=None,
         sector=None,
         country=None,
         meeting_notes=None,
     )
 
-    assert payload.website == "https://example.com"
+    assert payload.website == ""
     assert payload.description == ""
     assert payload.sector == ""
     assert payload.country == ""

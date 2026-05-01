@@ -212,13 +212,27 @@ def _aggregate_evidence(
     return deduped[:10]
 
 
-def _derive_startup_name(website: str, startup_name: str | None) -> str:
+def _derive_startup_name(
+    website: str | None,
+    startup_name: str | None,
+    document_filename: str | None = None,
+) -> str:
     if startup_name and startup_name.strip():
         return startup_name.strip()
 
-    hostname = urlparse(website).netloc.lower().removeprefix("www.")
-    base_name = hostname.split(".")[0] if hostname else "startup"
-    return " ".join(part.capitalize() for part in base_name.replace("_", "-").split("-"))
+    if website:
+        hostname = urlparse(website).netloc.lower().removeprefix("www.")
+        base_name = hostname.split(".")[0] if hostname else ""
+        if base_name:
+            return " ".join(part.capitalize() for part in base_name.replace("_", "-").split("-"))
+
+    if document_filename:
+        base_name = Path(document_filename).stem
+        cleaned = " ".join(part.capitalize() for part in base_name.replace("_", "-").split("-") if part)
+        if cleaned:
+            return cleaned
+
+    return "Uploaded Startup"
 
 
 def _build_research_query_description(
@@ -339,7 +353,7 @@ async def crm_summary(request: Request) -> CRMSummaryResponse:
 @app.post("/score-startup", response_model=StartupAnalysisResponse)
 async def score_startup(
     request: Request,
-    website: str = Form(...),
+    website: str | None = Form(default=None),
     startup_name: str | None = Form(default=None),
     description: str | None = Form(default=None),
     sector: str | None = Form(default=None),
@@ -355,13 +369,13 @@ async def score_startup(
     crm_notes: str | None = Form(default=None),
     crm_source: str | None = Form(default="frontend_upload"),
     record_in_crm: bool = Form(default=True),
-    supporting_document: UploadFile | None = File(default=None),
+    supporting_document: UploadFile = File(...),
 ) -> StartupAnalysisResponse:
     settings: Settings = request.app.state.settings
     http_client: httpx.AsyncClient = request.app.state.http_client
     payload = StartupScoreRequest(
         startup_name=_derive_startup_name(website, startup_name),
-        website=website,
+        website=website or "",
         description=description or "",
         sector=sector or "Unknown Sector",
         country=country or "Unknown",
@@ -418,6 +432,9 @@ async def score_startup(
             patent_result = result
         elif index == 4:
             competitor_result = result
+
+    if not startup_name and not payload.website:
+        payload.startup_name = _derive_startup_name(payload.website, startup_name, document_result.filename)
 
     limitations.extend(website_result.limitations)
     limitations.extend(document_result.limitations)

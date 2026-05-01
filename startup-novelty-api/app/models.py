@@ -8,18 +8,18 @@ from pydantic import BaseModel, Field, field_validator
 
 class StartupScoreRequest(BaseModel):
     startup_name: str = Field(min_length=1, max_length=200)
-    website: str = Field(min_length=1, max_length=500)
+    website: str = Field(default="", max_length=500)
     description: str = Field(default="", max_length=4_000)
     sector: str = Field(default="", max_length=200)
     country: str = Field(default="", max_length=100)
     meeting_notes: str = Field(default="", max_length=20_000)
 
-    @field_validator("startup_name", "website", mode="before")
+    @field_validator("startup_name", mode="before")
     @classmethod
     def strip_required_text(cls, value: str) -> str:
         return value.strip()
 
-    @field_validator("description", "sector", "country", "meeting_notes", mode="before")
+    @field_validator("website", "description", "sector", "country", "meeting_notes", mode="before")
     @classmethod
     def strip_optional_text(cls, value: str | None) -> str:
         return value.strip() if value else ""
